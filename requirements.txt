@@ -4,4 +4,3 @@ numpy>=1.21.0
 plotly>=5.15.0
 xlsxwriter>=3.0.0
 reportlab>=4.0.0
-openpyxl>=3.0.0

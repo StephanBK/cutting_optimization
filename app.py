@@ -266,7 +266,7 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
     fig = make_subplots(
         rows=len(bins_to_display),
         cols=1,
-        subplot_titles=[f"Stock #{i + 1}: {bin_data['stock_length']}″ ({bin_data['stock_length'] / 12:.1f} ft)" for
+        subplot_titles=[f"Stock #{i + 1}: {bin_data['stock_length']:.3f}″ ({bin_data['stock_length'] / 12:.1f} ft)" for
                         i, bin_data in enumerate(bins_to_display)],
         vertical_spacing=0.05
     )
@@ -285,11 +285,11 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
                     y=[f"Stock {bin_idx + 1}"],
                     orientation='h',
                     name=f"{piece['part_number']} ({piece['s_column']})",
-                    text=f"{piece['original_length']}″<br>{piece['s_column']}",
+                    text=f"{piece['original_length']:.3f}″<br>{piece['s_column']}",
                     textposition='inside',
                     marker_color=colors[piece_idx % len(colors)],
                     showlegend=False,
-                    hovertemplate=f"Part: {piece['part_number']}<br>Length: {piece['original_length']}″<br>Section: {piece['s_column']}<br>Miter: {'Yes' if piece['has_miter'] else 'No'}<extra></extra>"
+                    hovertemplate=f"Part: {piece['part_number']}<br>Length: {piece['original_length']:.3f}″<br>Section: {piece['s_column']}<br>Miter: {'Yes' if piece['has_miter'] else 'No'}<extra></extra>"
                 ),
                 row=row, col=1
             )
@@ -304,11 +304,11 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
                     y=[f"Stock {bin_idx + 1}"],
                     orientation='h',
                     name='Waste',
-                    text=f"Waste: {waste:.1f}″",
+                    text=f"Waste: {waste:.3f}″",
                     textposition='inside',
                     marker_color='lightgray',
                     showlegend=False,
-                    hovertemplate=f"Waste: {waste:.1f}″<extra></extra>"
+                    hovertemplate=f"Waste: {waste:.3f}″<extra></extra>"
                 ),
                 row=row, col=1
             )
@@ -376,8 +376,8 @@ def create_avery_5160_labels(bins, project_info):
         x = margin_x + (col * label_width)
         y = page_height - margin_y - ((row + 1) * label_height)
 
-        # Create label content
-        length_text = f"{piece['original_length']}\""
+        # Create label content with 3 decimal places
+        length_text = f"{piece['original_length']:.3f}\""
         s_column_text = piece['s_column']
 
         # Font sizes
@@ -436,7 +436,7 @@ def create_avery_5160_labels(bins, project_info):
                 text_y = start_y - (i * line_height)
                 c.drawString(text_x, text_y, line)
 
-        # Draw length (center of label)
+        # Draw length (center of label) with 3 decimal places
         c.setFont("Helvetica-Bold", length_font_size)
         text_width = c.stringWidth(length_text, "Helvetica-Bold", length_font_size)
         text_x = label_center_x - (text_width / 2)
@@ -495,7 +495,8 @@ with col1:
                 st.text(f"Total pieces to cut: {total_pieces}")
                 st.text("")
                 for item in cutting_data[:5]:  # Show first 5 items
-                    st.text(f"• {item['length']}″ × {item['total_qty']} pcs {'(Miter)' if item['has_miter'] else ''}")
+                    st.text(
+                        f"• {item['length']:.3f}″ × {item['total_qty']} pcs {'(Miter)' if item['has_miter'] else ''}")
                 if len(cutting_data) > 5:
                     st.text(f"... and {len(cutting_data) - 5} more lengths")
 
@@ -580,14 +581,15 @@ with col1:
             if validation['pieces_too_long']:
                 st.error("❌ Some pieces are too long for available stock!")
                 for piece in validation['pieces_too_long']:
-                    st.text(f"• {piece['original']}″ (needs {piece['length']:.1f}″ with miter) × {piece['qty']} pcs")
+                    st.text(
+                        f"• {piece['original']:.3f}″ (needs {piece['length']:.3f}″ with miter) × {piece['qty']} pcs")
                 st.text(
-                    f"Max stock length available: {max(item['length_inches'] for item in st.session_state.stock_inventory):.0f}″")
+                    f"Max stock length available: {max(item['length_inches'] for item in st.session_state.stock_inventory):.3f}″")
             elif not validation['has_enough']:
                 st.warning(f"⚠️ Warning: May not have enough total stock")
-                st.text(f"Total length needed: {validation['total_needed']:.1f}″")
-                st.text(f"Total stock available: {validation['total_available']:.1f}″")
-                st.text(f"Shortage: {validation['shortage']:.1f}″")
+                st.text(f"Total length needed: {validation['total_needed']:.3f}″")
+                st.text(f"Total stock available: {validation['total_available']:.3f}″")
+                st.text(f"Shortage: {validation['shortage']:.3f}″")
                 st.info("Optimization will show which pieces can't be cut")
 
                 # Still optimize to show what can be done
@@ -625,7 +627,7 @@ with col2:
             st.error(f"⚠️ {len(results['uncut_pieces'])} pieces could not be cut from available stock!")
             with st.expander("Show uncut pieces"):
                 for piece in results['uncut_pieces']:
-                    st.text(f"• {piece['original_length']}″ - {piece['part_number']} ({piece['s_column']})")
+                    st.text(f"• {piece['original_length']:.3f}″ - {piece['part_number']} ({piece['s_column']})")
 
         # Summary metrics
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -636,17 +638,30 @@ with col2:
         with col_m3:
             st.metric("Efficiency", f"{results['efficiency']:.1f}%")
         with col_m4:
-            st.metric("Total Waste", f"{results['total_waste_feet']:.1f} ft")
+            st.metric("Total Waste", f"{results['total_waste_feet']:.3f} ft")
 
-        # Stock usage breakdown
+        # Stock Requirements Display
         st.divider()
-        st.subheader("📦 Stock Usage")
+        st.subheader("📦 Stock Requirements")
+
+        # Create a nice display showing what stock is needed vs available
         for length_inches, count in results['stock_usage'].items():
             length_feet = length_inches / 12
             # Find original quantity for this length
             orig_qty = next((item['quantity'] for item in st.session_state.stock_inventory
                              if abs(item['length_inches'] - length_inches) < 0.01), 0)
-            st.text(f"{length_feet:.0f} ft stock: {count} used / {orig_qty} available")
+
+            # Create columns for better display
+            col_stock, col_used, col_available = st.columns([2, 1, 1])
+            with col_stock:
+                st.text(f"{length_feet:.0f} ft stock:")
+            with col_used:
+                st.text(f"Need: {count}")
+            with col_available:
+                if count <= orig_qty:
+                    st.success(f"Have: {orig_qty} ✅")
+                else:
+                    st.error(f"Have: {orig_qty} ❌")
 
         st.divider()
 
@@ -663,12 +678,12 @@ with col2:
         with st.expander("📋 Detailed Cut List", expanded=False):
             for i, bin_data in enumerate(results['bins'][:20]):  # Show first 20
                 length_feet = bin_data['stock_length'] / 12
-                st.write(f"**Stock #{i + 1} ({length_feet:.1f} ft / {bin_data['stock_length']}″):**")
+                st.write(f"**Stock #{i + 1} ({length_feet:.1f} ft / {bin_data['stock_length']:.3f}″):**")
                 for j, piece in enumerate(bin_data['pieces']):
                     st.text(
-                        f"  Cut {j + 1}: {piece['original_length']}″ - {piece['part_number']} ({piece['s_column']}) {'[M]' if piece['has_miter'] else ''}")
+                        f"  Cut {j + 1}: {piece['original_length']:.3f}″ - {piece['part_number']} ({piece['s_column']}) {'[M]' if piece['has_miter'] else ''}")
                 waste = bin_data['stock_length'] - sum(p['actual_length'] for p in bin_data['pieces'])
-                st.text(f"  Waste: {waste:.2f}″")
+                st.text(f"  Waste: {waste:.3f}″")
                 st.text("")
 
         # Export options
@@ -730,15 +745,25 @@ with col2:
             worksheet.write(row, 1, f"{results['efficiency']:.1f}%")
             row += 1
             worksheet.write(row, 0, "Total Waste:")
-            worksheet.write(row, 1, f"{results['total_waste']:.1f} inches ({results['total_waste_feet']:.1f} feet)")
+            worksheet.write(row, 1, f"{results['total_waste']:.3f} inches ({results['total_waste_feet']:.3f} feet)")
 
-            # Stock usage
+            # Stock requirements section
             row += 2
-            worksheet.write(row, 0, "STOCK USAGE")
+            worksheet.write(row, 0, "STOCK REQUIREMENTS")
+            row += 1
+            worksheet.write(row, 0, "Stock Length (ft)")
+            worksheet.write(row, 1, "Required Quantity")
+            worksheet.write(row, 2, "Available Quantity")
+            worksheet.write(row, 3, "Status")
             row += 1
             for length_inches, count in results['stock_usage'].items():
-                worksheet.write(row, 0, f"{length_inches / 12:.0f} ft stock:")
-                worksheet.write(row, 1, f"{count} pieces used")
+                length_feet = length_inches / 12
+                orig_qty = next((item['quantity'] for item in st.session_state.stock_inventory
+                                 if abs(item['length_inches'] - length_inches) < 0.01), 0)
+                worksheet.write(row, 0, f"{length_feet:.0f} ft")
+                worksheet.write(row, 1, count)
+                worksheet.write(row, 2, orig_qty)
+                worksheet.write(row, 3, "✅ OK" if count <= orig_qty else "❌ SHORTAGE")
                 row += 1
 
             # Write detailed cut list
@@ -750,7 +775,7 @@ with col2:
             worksheet.write(row, 2, "Stock Length (in)")
             worksheet.write(row, 3, "Cut #")
             worksheet.write(row, 4, "Part Number")
-            worksheet.write(row, 5, "Original Length")
+            worksheet.write(row, 5, "Original Length (in)")
             worksheet.write(row, 6, "Section")
             worksheet.write(row, 7, "Miter")
             worksheet.write(row, 8, "Waste (in)")
@@ -759,19 +784,19 @@ with col2:
             for i, bin_data in enumerate(results['bins']):
                 worksheet.write(row, 0, i + 1)
                 worksheet.write(row, 1, f"{bin_data['stock_length'] / 12:.1f}")
-                worksheet.write(row, 2, bin_data['stock_length'])
+                worksheet.write(row, 2, f"{bin_data['stock_length']:.3f}")
 
                 for j, piece in enumerate(bin_data['pieces']):
                     if j > 0:
                         row += 1
                     worksheet.write(row, 3, j + 1)
                     worksheet.write(row, 4, piece['part_number'])
-                    worksheet.write(row, 5, piece['original_length'])
+                    worksheet.write(row, 5, f"{piece['original_length']:.3f}")
                     worksheet.write(row, 6, piece['s_column'])
                     worksheet.write(row, 7, "Yes" if piece['has_miter'] else "No")
 
                 waste = bin_data['stock_length'] - sum(p['actual_length'] for p in bin_data['pieces'])
-                worksheet.write(row, 8, f"{waste:.2f}")
+                worksheet.write(row, 8, f"{waste:.3f}")
                 row += 1
 
             # Write uncut pieces if any
@@ -780,13 +805,13 @@ with col2:
                 worksheet.write(row, 0, "UNCUT PIECES")
                 row += 1
                 worksheet.write(row, 0, "Part Number")
-                worksheet.write(row, 1, "Original Length")
+                worksheet.write(row, 1, "Original Length (in)")
                 worksheet.write(row, 2, "Section")
                 worksheet.write(row, 3, "Miter")
                 row += 1
                 for piece in results['uncut_pieces']:
                     worksheet.write(row, 0, piece['part_number'])
-                    worksheet.write(row, 1, piece['original_length'])
+                    worksheet.write(row, 1, f"{piece['original_length']:.3f}")
                     worksheet.write(row, 2, piece['s_column'])
                     worksheet.write(row, 3, "Yes" if piece['has_miter'] else "No")
                     row += 1
@@ -804,4 +829,4 @@ with col2:
 
 # Footer
 st.divider()
-st.caption("Metal Cutting Optimizer v2.1 - Now with automatic sticker generation!")
+st.caption("Metal Cutting Optimizer v2.2 - Now with stock requirements and 3-decimal precision!")
