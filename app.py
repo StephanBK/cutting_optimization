@@ -6,6 +6,14 @@ from plotly.subplots import make_subplots
 import io
 from datetime import datetime
 import xlsxwriter
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.pdfgen import canvas
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+import textwrap
 
 # Page config
 st.set_page_config(
@@ -222,6 +230,7 @@ def optimize_cutting(cutting_data, stock_inventory, miter_allowance):
     total_stock_used = sum(b['stock_length'] for b in bins)
     total_material_needed = sum(p['actual_length'] for p in pieces_to_cut)
     total_waste = total_stock_used - sum(p['actual_length'] for b in bins for p in b['pieces'])
+    total_waste_feet = total_waste / 12  # Convert to feet
     efficiency = ((total_material_needed - sum(
         p['actual_length'] for p in uncut_pieces)) / total_stock_used * 100) if total_stock_used > 0 else 0
 
@@ -241,6 +250,7 @@ def optimize_cutting(cutting_data, stock_inventory, miter_allowance):
         'total_stock_used': total_stock_used,
         'total_material_needed': total_material_needed,
         'total_waste': total_waste,
+        'total_waste_feet': total_waste_feet,
         'efficiency': efficiency,
         'num_stock_pieces': len(bins),
         'stock_usage': stock_usage
@@ -319,6 +329,138 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
     )
 
     return fig
+
+
+def create_avery_5160_labels(bins, project_info):
+    """Create PDF with Avery 5160 labels for cut pieces"""
+
+    # Create PDF buffer
+    buffer = io.BytesIO()
+
+    # Avery 5160 specifications (in points - ReportLab uses points)
+    page_width, page_height = letter  # 8.5" x 11" in points (612 x 792)
+    label_width = 2.625 * inch  # 2-5/8"
+    label_height = 1.0 * inch  # 1"
+    labels_per_row = 3
+    labels_per_col = 10
+    labels_per_page = 30
+
+    # Calculate margins - standard Avery margins
+    margin_x = 0.15 * inch  # Left margin
+    margin_y = 0.5 * inch  # Top margin
+
+    # Create PDF
+    c = canvas.Canvas(buffer, pagesize=letter)
+
+    # Get project name
+    project_name = project_info.get('Project Name', project_info.get('Project', 'Test Project'))
+    if isinstance(project_name, (int, float)):
+        project_name = str(project_name)
+
+    # Collect all pieces to create labels for
+    all_pieces = []
+    for bin_data in bins:
+        for piece in bin_data['pieces']:
+            all_pieces.append(piece)
+
+    # Create labels
+    label_count = 0
+    page_count = 1
+
+    for piece in all_pieces:
+        # Calculate position on current page
+        row = (label_count % labels_per_page) // labels_per_row
+        col = (label_count % labels_per_page) % labels_per_row
+
+        # Calculate x, y coordinates (from bottom-left origin)
+        x = margin_x + (col * label_width)
+        y = page_height - margin_y - ((row + 1) * label_height)
+
+        # Create label content
+        length_text = f"{piece['original_length']}\""
+        s_column_text = piece['s_column']
+
+        # Font sizes
+        project_font_size = 9
+        length_font_size = 12
+        s_column_font_size = 10
+
+        # Handle project name wrapping
+        project_lines = []
+        max_chars = 24  # Characters that fit in label width
+
+        if len(str(project_name)) > max_chars:
+            words = str(project_name).split()
+            current_line = ""
+            for word in words:
+                test_line = current_line + (" " if current_line else "") + word
+                if len(test_line) <= max_chars:
+                    current_line = test_line
+                else:
+                    if current_line:
+                        project_lines.append(current_line)
+                    current_line = word
+            if current_line:
+                project_lines.append(current_line)
+            project_font_size = 8
+        else:
+            project_lines = [str(project_name)]
+
+        # Draw border for debugging (uncomment to see label boundaries)
+        # c.setStrokeColor(colors.red)
+        # c.rect(x, y, label_width, label_height)
+
+        # Calculate label center
+        label_center_x = x + (label_width / 2)
+        label_center_y = y + (label_height / 2)
+
+        # Draw project name (top part of label)
+        c.setFillColor(colors.black)
+        if len(project_lines) == 1:
+            # Single line
+            c.setFont("Helvetica-Bold", project_font_size)
+            text_width = c.stringWidth(project_lines[0], "Helvetica-Bold", project_font_size)
+            text_x = label_center_x - (text_width / 2)
+            text_y = label_center_y + (label_height * 0.25)
+            c.drawString(text_x, text_y, project_lines[0])
+        else:
+            # Multiple lines
+            line_height = project_font_size + 1
+            total_height = len(project_lines) * line_height
+            start_y = label_center_y + (label_height * 0.25) + (total_height / 2)
+
+            c.setFont("Helvetica-Bold", project_font_size)
+            for i, line in enumerate(project_lines):
+                text_width = c.stringWidth(line, "Helvetica-Bold", project_font_size)
+                text_x = label_center_x - (text_width / 2)
+                text_y = start_y - (i * line_height)
+                c.drawString(text_x, text_y, line)
+
+        # Draw length (center of label)
+        c.setFont("Helvetica-Bold", length_font_size)
+        text_width = c.stringWidth(length_text, "Helvetica-Bold", length_font_size)
+        text_x = label_center_x - (text_width / 2)
+        text_y = label_center_y - 2
+        c.drawString(text_x, text_y, length_text)
+
+        # Draw S-column (bottom of label)
+        c.setFont("Helvetica", s_column_font_size)
+        text_width = c.stringWidth(s_column_text, "Helvetica", s_column_font_size)
+        text_x = label_center_x - (text_width / 2)
+        text_y = label_center_y - (label_height * 0.3)
+        c.drawString(text_x, text_y, s_column_text)
+
+        label_count += 1
+
+        # Start new page if current page is full
+        if label_count % labels_per_page == 0 and label_count < len(all_pieces):
+            c.showPage()
+            page_count += 1
+
+    # Finalize PDF
+    c.save()
+    buffer.seek(0)
+    return buffer, len(all_pieces), page_count
 
 
 # Main app layout
@@ -494,7 +636,7 @@ with col2:
         with col_m3:
             st.metric("Efficiency", f"{results['efficiency']:.1f}%")
         with col_m4:
-            st.metric("Total Waste", f"{results['total_waste']:.1f}″")
+            st.metric("Total Waste", f"{results['total_waste_feet']:.1f} ft")
 
         # Stock usage breakdown
         st.divider()
@@ -533,6 +675,29 @@ with col2:
         st.divider()
         st.subheader("📥 Export Results")
 
+        # Sticker generation
+        st.write("**🏷️ Generate Avery 5160 Labels**")
+        if st.button("🖨️ Generate Labels PDF", use_container_width=True):
+            try:
+                with st.spinner("Creating labels..."):
+                    pdf_buffer, total_labels, page_count = create_avery_5160_labels(results['bins'],
+                                                                                    st.session_state.project_info)
+
+                st.success(f"✅ Created {total_labels} labels on {page_count} page(s)")
+                st.download_button(
+                    label=f"📄 Download Labels PDF ({total_labels} labels)",
+                    data=pdf_buffer.getvalue(),
+                    file_name=f"cutting_labels_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                    mime="application/pdf"
+                )
+            except ImportError:
+                st.error(
+                    "❌ PDF generation requires the reportlab library. Please install it with: pip install reportlab")
+            except Exception as e:
+                st.error(f"❌ Error generating labels: {str(e)}")
+
+        st.divider()
+
         # Excel export
         if st.button("📊 Generate Excel Report", use_container_width=True):
             # Create Excel file in memory
@@ -565,7 +730,7 @@ with col2:
             worksheet.write(row, 1, f"{results['efficiency']:.1f}%")
             row += 1
             worksheet.write(row, 0, "Total Waste:")
-            worksheet.write(row, 1, f"{results['total_waste']:.1f} inches")
+            worksheet.write(row, 1, f"{results['total_waste']:.1f} inches ({results['total_waste_feet']:.1f} feet)")
 
             # Stock usage
             row += 2
@@ -639,4 +804,4 @@ with col2:
 
 # Footer
 st.divider()
-st.caption("Metal Cutting Optimizer v2.0 - Minimize waste, maximize efficiency")
+st.caption("Metal Cutting Optimizer v2.1 - Now with automatic sticker generation!")
