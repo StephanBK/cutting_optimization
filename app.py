@@ -131,6 +131,7 @@ def validate_stock_availability(cutting_data, stock_inventory, miter_allowance):
     max_stock_length = max([item['length_inches'] for item in stock_inventory]) if stock_inventory else 0
 
     for item in cutting_data:
+        # For validation, use total length including miter if applicable
         actual_length = item['length']
         if item['has_miter']:
             actual_length += 2 * miter_allowance
@@ -141,7 +142,8 @@ def validate_stock_availability(cutting_data, stock_inventory, miter_allowance):
                 'length': actual_length,
                 'original': item['length'],
                 'part': item['part_number'],
-                'qty': item['total_qty']
+                'qty': item['total_qty'],
+                'has_miter': item['has_miter']
             })
 
         total_length_needed += actual_length * item['total_qty']
@@ -173,6 +175,7 @@ def optimize_cutting(cutting_data, stock_inventory, miter_allowance):
     # Prepare all pieces to cut
     pieces_to_cut = []
     for item in cutting_data:
+        # Calculate actual cutting length including miters
         actual_length = item['length']
         if item['has_miter']:
             actual_length += 2 * miter_allowance
@@ -186,6 +189,7 @@ def optimize_cutting(cutting_data, stock_inventory, miter_allowance):
                         'actual_length': actual_length,
                         'part_number': item['part_number'],
                         'has_miter': item['has_miter'],
+                        'miter_allowance': miter_allowance,
                         's_column': s_col
                     })
 
@@ -253,12 +257,13 @@ def optimize_cutting(cutting_data, stock_inventory, miter_allowance):
         'total_waste_feet': total_waste_feet,
         'efficiency': efficiency,
         'num_stock_pieces': len(bins),
-        'stock_usage': stock_usage
+        'stock_usage': stock_usage,
+        'miter_allowance': miter_allowance
     }
 
 
 def create_cutting_diagram(bins, max_bins_to_show=10):
-    """Create visual cutting diagram using Plotly"""
+    """Create visual cutting diagram using Plotly with miter visualization"""
 
     # Limit the number of bins to show for performance
     bins_to_display = bins[:max_bins_to_show]
@@ -271,28 +276,81 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
         vertical_spacing=0.05
     )
 
-    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#6C5CE7']
+    # Colors for pieces and miter
+    piece_colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#6C5CE7']
+    miter_color = '#FF8C00'  # Dark orange for miter sections
 
     for bin_idx, bin_data in enumerate(bins_to_display):
         row = bin_idx + 1
         x_position = 0
 
         for piece_idx, piece in enumerate(bin_data['pieces']):
-            # Create a rectangle for each piece
-            fig.add_trace(
-                go.Bar(
-                    x=[piece['actual_length']],
-                    y=[f"Stock {bin_idx + 1}"],
-                    orientation='h',
-                    name=f"{piece['part_number']} ({piece['s_column']})",
-                    text=f"{piece['original_length']:.3f}″<br>{piece['s_column']}",
-                    textposition='inside',
-                    marker_color=colors[piece_idx % len(colors)],
-                    showlegend=False,
-                    hovertemplate=f"Part: {piece['part_number']}<br>Length: {piece['original_length']:.3f}″<br>Section: {piece['s_column']}<br>Miter: {'Yes' if piece['has_miter'] else 'No'}<extra></extra>"
-                ),
-                row=row, col=1
-            )
+            piece_color = piece_colors[piece_idx % len(piece_colors)]
+
+            if piece['has_miter']:
+                # Draw left miter
+                fig.add_trace(
+                    go.Bar(
+                        x=[piece['miter_allowance']],
+                        y=[f"Stock {bin_idx + 1}"],
+                        orientation='h',
+                        name=f"Miter L - {piece['part_number']}",
+                        text=f"M",
+                        textposition='inside',
+                        marker_color=miter_color,
+                        showlegend=False,
+                        hovertemplate=f"Left Miter: {piece['miter_allowance']:.3f}″<extra></extra>"
+                    ),
+                    row=row, col=1
+                )
+
+                # Draw main piece
+                fig.add_trace(
+                    go.Bar(
+                        x=[piece['original_length']],
+                        y=[f"Stock {bin_idx + 1}"],
+                        orientation='h',
+                        name=f"{piece['part_number']} ({piece['s_column']})",
+                        text=f"{piece['original_length']:.3f}″<br>{piece['s_column']}",
+                        textposition='inside',
+                        marker_color=piece_color,
+                        showlegend=False,
+                        hovertemplate=f"Part: {piece['part_number']}<br>Length: {piece['original_length']:.3f}″<br>Section: {piece['s_column']}<br>Miter: Yes<extra></extra>"
+                    ),
+                    row=row, col=1
+                )
+
+                # Draw right miter
+                fig.add_trace(
+                    go.Bar(
+                        x=[piece['miter_allowance']],
+                        y=[f"Stock {bin_idx + 1}"],
+                        orientation='h',
+                        name=f"Miter R - {piece['part_number']}",
+                        text=f"M",
+                        textposition='inside',
+                        marker_color=miter_color,
+                        showlegend=False,
+                        hovertemplate=f"Right Miter: {piece['miter_allowance']:.3f}″<extra></extra>"
+                    ),
+                    row=row, col=1
+                )
+            else:
+                # Draw piece without miter
+                fig.add_trace(
+                    go.Bar(
+                        x=[piece['actual_length']],
+                        y=[f"Stock {bin_idx + 1}"],
+                        orientation='h',
+                        name=f"{piece['part_number']} ({piece['s_column']})",
+                        text=f"{piece['original_length']:.3f}″<br>{piece['s_column']}",
+                        textposition='inside',
+                        marker_color=piece_color,
+                        showlegend=False,
+                        hovertemplate=f"Part: {piece['part_number']}<br>Length: {piece['original_length']:.3f}″<br>Section: {piece['s_column']}<br>Miter: No<extra></extra>"
+                    ),
+                    row=row, col=1
+                )
 
         # Add waste section
         used_length = sum(p['actual_length'] for p in bin_data['pieces'])
@@ -323,7 +381,7 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
 
     fig.update_layout(
         height=100 * len(bins_to_display) + 200,
-        title_text="Cutting Layout Diagram",
+        title_text="Cutting Layout Diagram (Orange = Miter Allowance)",
         showlegend=False,
         barmode='stack'
     )
@@ -331,7 +389,7 @@ def create_cutting_diagram(bins, max_bins_to_show=10):
     return fig
 
 
-def create_avery_5160_labels(bins, project_info):
+def create_avery_5160_labels(bins, project_info, miter_allowance):
     """Create PDF with Avery 5160 labels for cut pieces"""
 
     # Create PDF buffer
@@ -379,11 +437,13 @@ def create_avery_5160_labels(bins, project_info):
         # Create label content with 3 decimal places
         length_text = f"{piece['original_length']:.3f}\""
         s_column_text = piece['s_column']
+        miter_text = f"2 x {miter_allowance:.1f} in miter" if piece['has_miter'] else ""
 
         # Font sizes
         project_font_size = 9
         length_font_size = 12
         s_column_font_size = 10
+        miter_font_size = 8
 
         # Handle project name wrapping
         project_lines = []
@@ -414,6 +474,18 @@ def create_avery_5160_labels(bins, project_info):
         label_center_x = x + (label_width / 2)
         label_center_y = y + (label_height / 2)
 
+        # Adjust text positioning based on whether there's miter text
+        if piece['has_miter']:
+            project_y_offset = 0.3
+            length_y_offset = 0.05
+            s_column_y_offset = -0.15
+            miter_y_offset = -0.35
+        else:
+            project_y_offset = 0.25
+            length_y_offset = -0.05
+            s_column_y_offset = -0.3
+            miter_y_offset = 0  # Not used
+
         # Draw project name (top part of label)
         c.setFillColor(colors.black)
         if len(project_lines) == 1:
@@ -421,13 +493,13 @@ def create_avery_5160_labels(bins, project_info):
             c.setFont("Helvetica-Bold", project_font_size)
             text_width = c.stringWidth(project_lines[0], "Helvetica-Bold", project_font_size)
             text_x = label_center_x - (text_width / 2)
-            text_y = label_center_y + (label_height * 0.25)
+            text_y = label_center_y + (label_height * project_y_offset)
             c.drawString(text_x, text_y, project_lines[0])
         else:
             # Multiple lines
             line_height = project_font_size + 1
             total_height = len(project_lines) * line_height
-            start_y = label_center_y + (label_height * 0.25) + (total_height / 2)
+            start_y = label_center_y + (label_height * project_y_offset) + (total_height / 2)
 
             c.setFont("Helvetica-Bold", project_font_size)
             for i, line in enumerate(project_lines):
@@ -440,15 +512,23 @@ def create_avery_5160_labels(bins, project_info):
         c.setFont("Helvetica-Bold", length_font_size)
         text_width = c.stringWidth(length_text, "Helvetica-Bold", length_font_size)
         text_x = label_center_x - (text_width / 2)
-        text_y = label_center_y - 2
+        text_y = label_center_y + (label_height * length_y_offset)
         c.drawString(text_x, text_y, length_text)
 
-        # Draw S-column (bottom of label)
+        # Draw S-column
         c.setFont("Helvetica", s_column_font_size)
         text_width = c.stringWidth(s_column_text, "Helvetica", s_column_font_size)
         text_x = label_center_x - (text_width / 2)
-        text_y = label_center_y - (label_height * 0.3)
+        text_y = label_center_y + (label_height * s_column_y_offset)
         c.drawString(text_x, text_y, s_column_text)
+
+        # Draw miter info if applicable
+        if piece['has_miter']:
+            c.setFont("Helvetica", miter_font_size)
+            text_width = c.stringWidth(miter_text, "Helvetica", miter_font_size)
+            text_x = label_center_x - (text_width / 2)
+            text_y = label_center_y + (label_height * miter_y_offset)
+            c.drawString(text_x, text_y, miter_text)
 
         label_count += 1
 
@@ -492,7 +572,9 @@ with col1:
 
             with st.expander(f"📊 Cutting List ({len(cutting_data)} unique lengths)", expanded=False):
                 total_pieces = sum(item['total_qty'] for item in cutting_data)
+                mitered_pieces = sum(item['total_qty'] for item in cutting_data if item['has_miter'])
                 st.text(f"Total pieces to cut: {total_pieces}")
+                st.text(f"Pieces with miter: {mitered_pieces}")
                 st.text("")
                 for item in cutting_data[:5]:  # Show first 5 items
                     st.text(
@@ -581,8 +663,8 @@ with col1:
             if validation['pieces_too_long']:
                 st.error("❌ Some pieces are too long for available stock!")
                 for piece in validation['pieces_too_long']:
-                    st.text(
-                        f"• {piece['original']:.3f}″ (needs {piece['length']:.3f}″ with miter) × {piece['qty']} pcs")
+                    miter_note = f" (needs {piece['length']:.3f}″ with miter)" if piece['has_miter'] else ""
+                    st.text(f"• {piece['original']:.3f}″{miter_note} × {piece['qty']} pcs")
                 st.text(
                     f"Max stock length available: {max(item['length_inches'] for item in st.session_state.stock_inventory):.3f}″")
             elif not validation['has_enough']:
@@ -627,7 +709,9 @@ with col2:
             st.error(f"⚠️ {len(results['uncut_pieces'])} pieces could not be cut from available stock!")
             with st.expander("Show uncut pieces"):
                 for piece in results['uncut_pieces']:
-                    st.text(f"• {piece['original_length']:.3f}″ - {piece['part_number']} ({piece['s_column']})")
+                    miter_note = " (with miter)" if piece['has_miter'] else ""
+                    st.text(
+                        f"• {piece['original_length']:.3f}″{miter_note} - {piece['part_number']} ({piece['s_column']})")
 
         # Summary metrics
         col_m1, col_m2, col_m3, col_m4 = st.columns(4)
@@ -665,8 +749,8 @@ with col2:
 
         st.divider()
 
-        # Cutting diagram
-        st.subheader("Cutting Layout")
+        # Cutting diagram with miter visualization
+        st.subheader("Cutting Layout (Orange = Miter)")
         if len(results['bins']) > 10:
             st.info(f"Showing first 10 of {len(results['bins'])} stock pieces")
 
@@ -680,8 +764,10 @@ with col2:
                 length_feet = bin_data['stock_length'] / 12
                 st.write(f"**Stock #{i + 1} ({length_feet:.1f} ft / {bin_data['stock_length']:.3f}″):**")
                 for j, piece in enumerate(bin_data['pieces']):
+                    miter_note = f" [M: 2×{results['miter_allowance']:.1f}″]" if piece['has_miter'] else ""
+                    total_length = piece['actual_length']
                     st.text(
-                        f"  Cut {j + 1}: {piece['original_length']:.3f}″ - {piece['part_number']} ({piece['s_column']}) {'[M]' if piece['has_miter'] else ''}")
+                        f"  Cut {j + 1}: {piece['original_length']:.3f}″{miter_note} = {total_length:.3f}″ total - {piece['part_number']} ({piece['s_column']})")
                 waste = bin_data['stock_length'] - sum(p['actual_length'] for p in bin_data['pieces'])
                 st.text(f"  Waste: {waste:.3f}″")
                 st.text("")
@@ -695,8 +781,11 @@ with col2:
         if st.button("🖨️ Generate Labels PDF", use_container_width=True):
             try:
                 with st.spinner("Creating labels..."):
-                    pdf_buffer, total_labels, page_count = create_avery_5160_labels(results['bins'],
-                                                                                    st.session_state.project_info)
+                    pdf_buffer, total_labels, page_count = create_avery_5160_labels(
+                        results['bins'],
+                        st.session_state.project_info,
+                        results['miter_allowance']
+                    )
 
                 st.success(f"✅ Created {total_labels} labels on {page_count} page(s)")
                 st.download_button(
@@ -730,6 +819,9 @@ with col2:
             row += 1
             worksheet.write(row, 0, "Generated:")
             worksheet.write(row, 1, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+            row += 1
+            worksheet.write(row, 0, "Miter Allowance:")
+            worksheet.write(row, 1, f"{results['miter_allowance']:.1f} inches per side")
 
             # Write optimization summary
             row += 2
@@ -776,9 +868,10 @@ with col2:
             worksheet.write(row, 3, "Cut #")
             worksheet.write(row, 4, "Part Number")
             worksheet.write(row, 5, "Original Length (in)")
-            worksheet.write(row, 6, "Section")
-            worksheet.write(row, 7, "Miter")
-            worksheet.write(row, 8, "Waste (in)")
+            worksheet.write(row, 6, "Miter")
+            worksheet.write(row, 7, "Total Length (in)")
+            worksheet.write(row, 8, "Section")
+            worksheet.write(row, 9, "Waste (in)")
 
             row += 1
             for i, bin_data in enumerate(results['bins']):
@@ -792,11 +885,12 @@ with col2:
                     worksheet.write(row, 3, j + 1)
                     worksheet.write(row, 4, piece['part_number'])
                     worksheet.write(row, 5, f"{piece['original_length']:.3f}")
-                    worksheet.write(row, 6, piece['s_column'])
-                    worksheet.write(row, 7, "Yes" if piece['has_miter'] else "No")
+                    worksheet.write(row, 6, f"2×{results['miter_allowance']:.1f}″" if piece['has_miter'] else "No")
+                    worksheet.write(row, 7, f"{piece['actual_length']:.3f}")
+                    worksheet.write(row, 8, piece['s_column'])
 
                 waste = bin_data['stock_length'] - sum(p['actual_length'] for p in bin_data['pieces'])
-                worksheet.write(row, 8, f"{waste:.3f}")
+                worksheet.write(row, 9, f"{waste:.3f}")
                 row += 1
 
             # Write uncut pieces if any
@@ -806,14 +900,16 @@ with col2:
                 row += 1
                 worksheet.write(row, 0, "Part Number")
                 worksheet.write(row, 1, "Original Length (in)")
-                worksheet.write(row, 2, "Section")
-                worksheet.write(row, 3, "Miter")
+                worksheet.write(row, 2, "Miter")
+                worksheet.write(row, 3, "Total Length (in)")
+                worksheet.write(row, 4, "Section")
                 row += 1
                 for piece in results['uncut_pieces']:
                     worksheet.write(row, 0, piece['part_number'])
                     worksheet.write(row, 1, f"{piece['original_length']:.3f}")
-                    worksheet.write(row, 2, piece['s_column'])
-                    worksheet.write(row, 3, "Yes" if piece['has_miter'] else "No")
+                    worksheet.write(row, 2, f"2×{results['miter_allowance']:.1f}″" if piece['has_miter'] else "No")
+                    worksheet.write(row, 3, f"{piece['actual_length']:.3f}")
+                    worksheet.write(row, 4, piece['s_column'])
                     row += 1
 
             workbook.close()
@@ -829,4 +925,4 @@ with col2:
 
 # Footer
 st.divider()
-st.caption("Metal Cutting Optimizer v2.2 - Now with stock requirements and 3-decimal precision!")
+st.caption("Metal Cutting Optimizer v2.3 - Enhanced miter handling with visual indicators!")
