@@ -19,12 +19,13 @@ import textwrap
 import hashlib
 import xmlrpc.client
 import base64
+import os
 
 # ── Odoo Config ──
-ODOO_URL = "https://inovues.odoo.com"
-ODOO_DB = "inovues"
-ODOO_USER = "sketterer@inovues.com"
-ODOO_API_KEY = "45ad72d4c24f0966971b4228e0b786752964b422"
+ODOO_URL     = os.environ.get("ODOO_URL",     "https://inovues.odoo.com")
+ODOO_DB      = os.environ.get("ODOO_DB",      "inovues")
+ODOO_USER    = os.environ.get("ODOO_USER",    "sketterer@inovues.com")
+ODOO_API_KEY = os.environ.get("ODOO_API_KEY", "")
 
 @st.cache_data(ttl=300)
 def get_odoo_projects():
@@ -45,28 +46,6 @@ def get_odoo_projects():
     except Exception as e:
         return []
 
-def upload_to_odoo_project(project_id, filename, file_bytes, mimetype):
-    """Upload a file as attachment to an Odoo project"""
-    try:
-        common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
-        uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
-        models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
-        attachment_id = models.execute_kw(
-            ODOO_DB, uid, ODOO_API_KEY,
-            "ir.attachment", "create",
-            [{
-                "name": filename,
-                "type": "binary",
-                "datas": base64.b64encode(file_bytes).decode("utf-8"),
-                "res_model": "project.project",
-                "res_id": project_id,
-                "mimetype": mimetype,
-            }]
-        )
-        return attachment_id
-    except Exception as e:
-        st.error(f"Upload failed: {e}")
-        return None
 
 # Page config
 st.set_page_config(
@@ -654,37 +633,95 @@ with col2:
 
         # ── Odoo Integration ──
         st.divider()
-        st.subheader("🔗 Save to Odoo Project")
+        st.subheader("💾 Save to Odoo Project")
 
         projects = get_odoo_projects()
-        if projects:
+        if not projects:
+            st.error("Could not connect to Odoo or no active projects found.")
+        else:
             project_options = {p['name']: p['id'] for p in projects}
-            selected_project_name = st.selectbox("Select Odoo Project", options=list(project_options.keys()))
-            selected_project_id = project_options[selected_project_name]
+            selected_project_name = st.selectbox(
+                "Select Odoo Project to attach files to:",
+                options=list(project_options.keys()),
+                index=None,
+                placeholder="Choose a project..."
+            )
 
             files_ready = list(st.session_state.generated_files.keys())
-            if files_ready:
-                st.info(f"Files ready to upload: {', '.join(files_ready)}")
-                if st.button("📤 Save All Files to Odoo", type="primary", use_container_width=True):
-                    uploaded_count = 0
-                    with st.spinner("Uploading to Odoo..."):
-                        for file_key, file_data in st.session_state.generated_files.items():
-                            result = upload_to_odoo_project(
-                                selected_project_id,
-                                file_data['filename'],
-                                file_data['data'],
-                                file_data['mime']
-                            )
-                            if result:
-                                uploaded_count += 1
-                    if uploaded_count == len(st.session_state.generated_files):
-                        st.success(f"✅ {uploaded_count} file(s) uploaded to **{selected_project_name}** in Odoo!")
-                    else:
-                        st.warning(f"⚠️ {uploaded_count}/{len(st.session_state.generated_files)} files uploaded.")
-            else:
+            if not files_ready:
                 st.warning("Generate at least one file above before saving to Odoo.")
-        else:
-            st.error("Could not connect to Odoo or no active projects found.")
+            else:
+                st.info(f"Files ready to upload: {', '.join(files_ready)}")
+
+                if st.button("📎 Attach all files to selected project", type="primary",
+                             use_container_width=True, disabled=selected_project_name is None):
+                    project_id = project_options[selected_project_name]
+                    with st.spinner(f"Attaching files to '{selected_project_name}'..."):
+                        try:
+                            common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+                            uid    = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+                            if not uid:
+                                st.error("❌ Odoo authentication failed — check ODOO_API_KEY env var.")
+                            else:
+                                models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+
+                                def odoo_call(model, method, args, kwargs={}):
+                                    return models.execute_kw(ODOO_DB, uid, ODOO_API_KEY, model, method, args, kwargs)
+
+                                # Build task name from project info
+                                proj_name = st.session_state.project_info.get(
+                                    'Project Name',
+                                    st.session_state.project_info.get('Project', '')
+                                )
+                                task_date = datetime.now().strftime('%Y-%m-%d')
+                                task_title = f"Cutting Optimization — {proj_name} — {task_date}" if proj_name else f"Cutting Optimization — {task_date}"
+
+                                # Create task in Engineering stage, set to Approved
+                                task_id = odoo_call("project.task", "create", [{
+                                    "name":       task_title,
+                                    "project_id": project_id,
+                                    "stage_id":   8,            # Engineering
+                                    "state":      "03_approved",
+                                }])
+
+                                # Attach all generated files to the task
+                                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                                for file_key, file_data in st.session_state.generated_files.items():
+                                    odoo_call("ir.attachment", "create", [{
+                                        "name":      file_data['filename'],
+                                        "type":      "binary",
+                                        "datas":     base64.b64encode(file_data['data']).decode("utf-8"),
+                                        "res_model": "project.task",
+                                        "res_id":    task_id,
+                                        "mimetype":  file_data['mime'],
+                                    }])
+
+                                # Build chatter message with optimization summary
+                                results = st.session_state.optimization_results
+                                odoo_call("project.task", "message_post", [[task_id]], {
+                                    "body": (
+                                        f"<b>✂️ Cutting Optimization attached</b><br/>"
+                                        f"Project: {proj_name}<br/>"
+                                        f"Stock Pieces Used: {results['num_stock_pieces']}<br/>"
+                                        f"Pieces Cut: {results['pieces_cut']}/{results['total_pieces']}<br/>"
+                                        f"Efficiency: {results['efficiency']:.1f}%<br/>"
+                                        f"Total Waste: {results['total_waste_feet']:.3f} ft<br/>"
+                                        f"Files: {', '.join(files_ready)}<br/>"
+                                        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+                                    ),
+                                    "message_type": "comment",
+                                    "subtype_xmlid": "mail.mt_comment",
+                                })
+
+                                st.success(
+                                    f"✅ {len(files_ready)} file(s) attached to task **{task_title}** "
+                                    f"in **{selected_project_name}** (Engineering → Approved)!"
+                                )
+
+                        except xmlrpc.client.Fault as e:
+                            st.error(f"❌ Odoo API error: {e.faultString}")
+                        except Exception as e:
+                            st.error(f"❌ Error: {str(e)}")
 
     else:
         st.info("👈 Upload a file and click 'Optimize Cutting' to see results")
