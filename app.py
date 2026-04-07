@@ -477,24 +477,121 @@ col1, col2 = st.columns([1, 2])
 
 with col1:
     st.header("📁 Input Settings")
-    uploaded_file = st.file_uploader("Upload Aggcutonly file (.xlsx)", type=['xlsx'], help="Upload the Aggcutonly cutting list Excel file")
-    if uploaded_file:
-        project_info, cutting_data = parse_excel_file(uploaded_file)
-        if project_info and cutting_data:
-            st.session_state.project_info = project_info
-            st.session_state.cutting_data = cutting_data
-            st.success("✅ File loaded successfully!")
-            with st.expander("📋 Project Information", expanded=True):
-                for key, value in project_info.items():
-                    st.text(f"{key}: {value}")
-            with st.expander(f"📊 Cutting List ({len(cutting_data)} unique lengths)", expanded=False):
-                total_pieces = sum(item['total_qty'] for item in cutting_data)
-                st.text(f"Total pieces to cut: {total_pieces}")
-                st.text(f"Cut loss per piece: {CUT_LOSS}″")
-                for item in cutting_data[:5]:
-                    st.text(f"• {item['length']:.3f}″ (+{CUT_LOSS}″ cut) × {item['total_qty']} pcs")
-                if len(cutting_data) > 5:
-                    st.text(f"... and {len(cutting_data)-5} more lengths")
+
+    # ── Helper: fetch AggCutOnly attachments for a project's tasks ──
+    @st.cache_data(ttl=60)
+    def get_aggcutonly_files(project_id):
+        """Return list of AggCutOnly attachments across all tasks in the project."""
+        try:
+            common = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/common")
+            uid = common.authenticate(ODOO_DB, ODOO_USER, ODOO_API_KEY, {})
+            if not uid:
+                return []
+            models = xmlrpc.client.ServerProxy(f"{ODOO_URL}/xmlrpc/2/object")
+            # Get all task IDs for this project
+            task_ids = models.execute_kw(
+                ODOO_DB, uid, ODOO_API_KEY,
+                "project.task", "search",
+                [[["project_id", "=", project_id]]]
+            )
+            if not task_ids:
+                return []
+            # Find attachments on those tasks whose name contains AggCutOnly
+            attachments = models.execute_kw(
+                ODOO_DB, uid, ODOO_API_KEY,
+                "ir.attachment", "search_read",
+                [[
+                    ["res_model", "=", "project.task"],
+                    ["res_id", "in", task_ids],
+                    ["name", "ilike", "AggCutOnly"]
+                ]],
+                {"fields": ["id", "name", "create_date", "datas"], "order": "create_date desc"}
+            )
+            return attachments
+        except Exception:
+            return []
+
+    def load_file_from_attachment(attachment):
+        """Decode base64 datas from Odoo attachment into a BytesIO object."""
+        raw = base64.b64decode(attachment["datas"])
+        return io.BytesIO(raw)
+
+    # ── DEFAULT: Odoo Project Picker ──
+    st.subheader("Load from Odoo")
+    projects = get_odoo_projects()
+    project_map = {p["name"]: p["id"] for p in projects} if projects else {}
+
+    if not project_map:
+        st.warning("⚠️ Could not load Odoo projects. Use manual upload below.")
+    else:
+        selected_project_name = st.selectbox(
+            "Select Project",
+            options=[""] + list(project_map.keys()),
+            index=0,
+            format_func=lambda x: "— choose a project —" if x == "" else x,
+            key="odoo_project_select"
+        )
+
+        if selected_project_name:
+            project_id = project_map[selected_project_name]
+            attachments = get_aggcutonly_files(project_id)
+
+            if not attachments:
+                st.warning("No AggCutOnly files found for this project.")
+            else:
+                # Build display labels — mark newest with ⭐
+                def fmt_attachment(i, att):
+                    label = att["name"]
+                    date_str = att.get("create_date", "")[:10]
+                    suffix = f" ({date_str})"
+                    return ("⭐ " if i == 0 else "") + label + suffix
+
+                options = [fmt_attachment(i, a) for i, a in enumerate(attachments)]
+                selected_label = st.selectbox(
+                    "Select AggCutOnly file (⭐ = newest)",
+                    options=options,
+                    index=0,
+                    key="odoo_file_select"
+                )
+                selected_idx = options.index(selected_label)
+                selected_attachment = attachments[selected_idx]
+
+                if st.button("📥 Load File from Odoo", use_container_width=True):
+                    try:
+                        file_obj = load_file_from_attachment(selected_attachment)
+                        project_info, cutting_data = parse_excel_file(file_obj)
+                        if project_info and cutting_data:
+                            st.session_state.project_info = project_info
+                            st.session_state.cutting_data = cutting_data
+                            st.success(f"✅ Loaded: {selected_attachment['name']}")
+                    except Exception as e:
+                        st.error(f"❌ Failed to load file: {e}")
+
+    # ── Show parsed file info if loaded (works for both Odoo and manual) ──
+    if st.session_state.cutting_data:
+        project_info = st.session_state.project_info
+        cutting_data = st.session_state.cutting_data
+        with st.expander("📋 Project Information", expanded=True):
+            for key, value in project_info.items():
+                st.text(f"{key}: {value}")
+        with st.expander(f"📊 Cutting List ({len(cutting_data)} unique lengths)", expanded=False):
+            total_pieces = sum(item['total_qty'] for item in cutting_data)
+            st.text(f"Total pieces to cut: {total_pieces}")
+            st.text(f"Cut loss per piece: {CUT_LOSS}″")
+            for item in cutting_data[:5]:
+                st.text(f"• {item['length']:.3f}″ (+{CUT_LOSS}″ cut) × {item['total_qty']} pcs")
+            if len(cutting_data) > 5:
+                st.text(f"... and {len(cutting_data)-5} more lengths")
+
+    # ── FALLBACK: Manual Upload ──
+    with st.expander("📁 Manual Upload", expanded=False):
+        uploaded_file = st.file_uploader("Upload Aggcutonly file (.xlsx)", type=['xlsx'], help="Upload the Aggcutonly cutting list Excel file")
+        if uploaded_file:
+            project_info, cutting_data = parse_excel_file(uploaded_file)
+            if project_info and cutting_data:
+                st.session_state.project_info = project_info
+                st.session_state.cutting_data = cutting_data
+                st.success("✅ File loaded successfully!")
 
     st.divider()
     st.header("📦 Stock Inventory")
