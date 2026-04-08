@@ -1,3 +1,4 @@
+import json
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -20,6 +21,43 @@ import hashlib
 import xmlrpc.client
 import base64
 import os
+
+# ── Google Drive Config ──
+GDRIVE_WEBHOOK_URL = os.environ.get("GDRIVE_WEBHOOK_URL", "")
+
+
+def upload_to_gdrive(filename, file_bytes, mimetype, subfolder_name=None):
+    """Upload a file to Google Drive via Apps Script webhook."""
+    try:
+        import urllib.request
+
+        if not GDRIVE_WEBHOOK_URL:
+            return None, "Google Drive not configured (missing GDRIVE_WEBHOOK_URL)"
+
+        payload = json.dumps({
+            "filename": filename,
+            "data": base64.b64encode(file_bytes).decode("utf-8"),
+            "mimetype": mimetype,
+            "subfolder": subfolder_name or ""
+        }).encode("utf-8")
+
+        req = urllib.request.Request(
+            GDRIVE_WEBHOOK_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read().decode("utf-8"))
+
+        if result.get("success"):
+            return result, None
+        else:
+            return None, result.get("error", "Unknown error")
+
+    except Exception as e:
+        return None, str(e)
+
 
 # ── Odoo Config ──
 ODOO_URL     = os.environ.get("ODOO_URL",     "https://inovues.odoo.com")
@@ -814,6 +852,24 @@ with col2:
                                     f"✅ {len(files_ready)} file(s) attached to task **{task_title}** "
                                     f"in **{selected_project_name}** (Engineering → Approved)!"
                                 )
+
+                                # ── Also upload to Google Drive ──
+                                if GDRIVE_WEBHOOK_URL:
+                                    gdrive_ok = 0
+                                    gdrive_subfolder = selected_project_name
+                                    for file_key, file_data in st.session_state.generated_files.items():
+                                        result, gdrive_err = upload_to_gdrive(
+                                            file_data['filename'],
+                                            file_data['data'],
+                                            file_data['mime'],
+                                            subfolder_name=gdrive_subfolder
+                                        )
+                                        if result:
+                                            gdrive_ok += 1
+                                        elif gdrive_err:
+                                            st.warning(f"⚠️ Drive upload failed for {file_data['filename']}: {gdrive_err}")
+                                    if gdrive_ok > 0:
+                                        st.success(f"📁 {gdrive_ok} file(s) also saved to Google Drive → {gdrive_subfolder}/")
 
                         except xmlrpc.client.Fault as e:
                             st.error(f"❌ Odoo API error: {e.faultString}")
